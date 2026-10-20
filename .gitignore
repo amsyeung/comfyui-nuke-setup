@@ -1,0 +1,45 @@
+# Keep personal and generated data out of this public repo.
+
+# ComfyUI data, in case a ComfyUI folder is ever placed here
+ComfyUI/
+input/
+output/
+models/
+user/
+.comfynuke-downloads/
+
+# Media and model files
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.gguf
+*.bin
+*.mp4
+*.mov
+*.webm
+*.jpg
+*.jpeg
+*.exr
+*.webp
+# the icons in assets/ are the only images that belong here
+*.png
+!assets/*.png
+
+# Secrets and local settings
+.env
+.env.*
+*.token
+token
+stored_tokens
+config.json
+state.json
+
+# Logs, caches and build output
+*.log
+logs/
+__pycache__/
+*.pyc
+ComfyNuke.zip
+.DS_Store
+Thumbs.db
