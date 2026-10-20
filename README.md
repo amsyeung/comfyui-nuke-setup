@@ -213,3 +213,7 @@ Commands: `install`, `update`, `status`, `start`, `rollback`, `doctor`, `uninsta
 - When `comfynuke.ps1` or `install.sh` changes, bump both `$AppVersion` and `APP_VERSION`. `self-update` compares them, and the release workflow fails if they differ.
 - Save `comfynuke.ps1` as **UTF-8 with BOM**; Windows PowerShell 5.1 misreads non-ASCII characters otherwise.
 - `install.sh` must work with macOS's bash 3.2 (no associative arrays, no `mapfile`). It reads `versions.json` with macOS's built-in `plutil`.
+
+## Licence
+
+ComfyNuke's own scripts are under the [MIT License](LICENSE). The software it installs keeps its own licences: ComfyUI and ComfyUI-for-Nuke (both GPL-3.0), the custom nodes (see their repositories), Nuke (a commercial Foundry licence) and each AI model (check its Hugging Face page; many do not allow commercial use).
