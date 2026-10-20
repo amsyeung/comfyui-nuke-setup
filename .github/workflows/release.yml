@@ -28,7 +28,7 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory ComfyNuke | Out-Null
-          Copy-Item comfynuke.ps1, install.sh, model_sorter.py, model_download.py, versions.json, ComfyNuke.bat, README.md, CHANGELOG.md ComfyNuke
+          Copy-Item comfynuke.ps1, install.sh, model_sorter.py, model_download.py, versions.json, ComfyNuke.bat, README.md, CHANGELOG.md, LICENSE ComfyNuke
           Copy-Item assets ComfyNuke -Recurse
           Compress-Archive -Path ComfyNuke -DestinationPath ComfyNuke.zip
       - name: Publish release
