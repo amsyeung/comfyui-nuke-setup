@@ -1,0 +1,130 @@
+{
+  "manifestVersion": "2026.10.19",
+  "notes": "Tested pins. Only change these after testing a full install on a real machine; record every change in CHANGELOG.md.",
+  "tools": {
+    "uv": {
+      "version": "0.13.1",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-x86_64-pc-windows-msvc.zip",
+      "sha256": "3b2661a463a5baea7f5076ea2b25ab71d77f36a6c0d809e5350651792f80a672"
+    },
+    "git": {
+      "version": "2.56.0.2",
+      "url": "https://github.com/git-for-windows/git/releases/download/v2.56.0.windows.2/MinGit-2.56.0.2-64-bit.zip",
+      "sha256": "da35e72aa21c005a5a0d298cfbae110bc1609a815730ea0dde84b01a1b3cd3be"
+    },
+    "python": {
+      "version": "3.12.13"
+    }
+  },
+  "repos": {
+    "comfyui": {
+      "label": "ComfyUI",
+      "url": "https://github.com/comfyanonymous/ComfyUI",
+      "dir": "{comfy}",
+      "track": "tag",
+      "ref": "v0.42.1",
+      "commit": "63be2f9b82ad0dac88a7ceaa28a9cf3154125a18",
+      "requirements": true,
+      "submodules": false,
+      "risk": "Medium: older ComfyUI workflows may need small fixes"
+    },
+    "videohelpersuite": {
+      "label": "ComfyUI-VideoHelperSuite",
+      "url": "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite",
+      "dir": "{comfy}/custom_nodes/ComfyUI-VideoHelperSuite",
+      "track": "branch",
+      "ref": "main",
+      "commit": "4d907bee61e92c2e65af3bd6383a4e4d356126d1",
+      "requirements": true,
+      "submodules": false,
+      "risk": "Low"
+    },
+    "hqimagesave": {
+      "label": "ComfyUI-HQ-Image-Save",
+      "url": "https://github.com/spacepxl/ComfyUI-HQ-Image-Save",
+      "dir": "{comfy}/custom_nodes/ComfyUI-HQ-Image-Save",
+      "track": "branch",
+      "ref": "main",
+      "commit": "44b0c6f769a1e90d986308ccc7d83851216e191d",
+      "requirements": true,
+      "submodules": false,
+      "risk": "Low"
+    },
+    "comfyui2nuke": {
+      "label": "ComfyUI-for-Nuke (Nuke plugin)",
+      "url": "https://github.com/vinavfx/ComfyUI-for-Nuke",
+      "dir": "{nuke}/comfyui2nuke",
+      "track": "tag",
+      "ref": "v1.4",
+      "commit": "c81be1e4f7220f18bf08950b833624d737b46f5c",
+      "requirements": false,
+      "submodules": true,
+      "risk": "High: ComfyUI nodes in older .nk scripts may need to be refreshed"
+    }
+  },
+  "torch": {
+    "note": "Variants are tried in order; the first one the GPU and driver satisfy wins. cpu is the fallback without an NVIDIA GPU.",
+    "variants": [
+      {
+        "name": "cu130",
+        "index": "https://download.pytorch.org/whl/cu130",
+        "torch": "2.14.1",
+        "minDriver": 580.0,
+        "minComputeCap": 7.5,
+        "maxComputeCap": 99
+      },
+      {
+        "name": "cu128",
+        "index": "https://download.pytorch.org/whl/cu128",
+        "torch": "2.11.0",
+        "minDriver": 570.0,
+        "minComputeCap": 7.5,
+        "maxComputeCap": 99
+      },
+      {
+        "name": "cu126",
+        "index": "https://download.pytorch.org/whl/cu126",
+        "torch": "2.14.1",
+        "minDriver": 528.33,
+        "minComputeCap": 5.0,
+        "maxComputeCap": 11.9
+      },
+      {
+        "name": "cpu",
+        "index": "https://download.pytorch.org/whl/cpu",
+        "torch": "2.14.1",
+        "minDriver": 0,
+        "minComputeCap": 0,
+        "maxComputeCap": 99
+      }
+    ]
+  },
+  "nukeLibs": [
+    "websocket-client==1.8.0",
+    "requests==2.32.5",
+    "urllib3==2.6.3",
+    "idna==3.20",
+    "certifi==2026.10.19",
+    "charset-normalizer==3.5.2"
+  ],
+  "minNukeMajor": 14,
+  "repoOrder": [
+    "comfyui",
+    "videohelpersuite",
+    "hqimagesave",
+    "comfyui2nuke"
+  ],
+  "macos": {
+    "note": "Apple Silicon only: PyTorch no longer ships Intel macOS wheels. torch 2.14.1 needs macOS 14+. Git comes from Apple Command Line Tools.",
+    "minVersion": "14.0",
+    "uv": {
+      "version": "0.13.1",
+      "url": "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-aarch64-apple-darwin.tar.gz",
+      "sha256": "cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2"
+    },
+    "torch": {
+      "version": "2.14.1",
+      "variant": "mps"
+    }
+  }
+}

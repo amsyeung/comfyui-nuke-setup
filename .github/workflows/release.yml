@@ -1,0 +1,37 @@
+# On a version tag (v*), check the script parses in Windows PowerShell 5.1,
+# then publish ComfyNuke.zip as a GitHub release asset (used by self-update).
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse check (PowerShell 5.1)
+        shell: powershell
+        run: |
+          $errs = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD\comfynuke.ps1", [ref]$null, [ref]$errs)
+          if ($errs) { $errs; exit 1 }
+          $ver = (Select-String -Path comfynuke.ps1 -Pattern "^\`$AppVersion\s*=\s*'([^']+)'").Matches[0].Groups[1].Value
+          if ("v$ver" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match `$AppVersion $ver" }
+          $shVer = (Select-String -Path install.sh -Pattern '^APP_VERSION="([^"]+)"').Matches[0].Groups[1].Value
+          if ($shVer -ne $ver) { throw "install.sh APP_VERSION $shVer differs from comfynuke.ps1 $ver" }
+      - name: Syntax check (bash)
+        shell: bash
+        run: bash -n install.sh
+      - name: Build zip
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory ComfyNuke | Out-Null
+          Copy-Item comfynuke.ps1, install.sh, model_sorter.py, model_download.py, versions.json, ComfyNuke.bat, README.md, CHANGELOG.md ComfyNuke
+          Copy-Item assets ComfyNuke -Recurse
+          Compress-Archive -Path ComfyNuke -DestinationPath ComfyNuke.zip
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" ComfyNuke.zip --title "${{ github.ref_name }}" --notes-file CHANGELOG.md
