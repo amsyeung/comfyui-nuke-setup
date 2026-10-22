@@ -40,7 +40,7 @@ try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 # ----------------------------------------------------------------------------
 # Constants
 # ----------------------------------------------------------------------------
-$AppVersion = '0.1.0'
+$AppVersion = '0.1.1'
 $RepoSlug   = 'amsyeung/comfyui-nuke-setup'      # GitHub repo used by self-update
 $AppDir     = $PSScriptRoot
 $Manifest   = Get-Content -Raw -Encoding UTF8 (Join-Path $AppDir 'versions.json') | ConvertFrom-Json
@@ -207,6 +207,7 @@ function Set-Paths {
         Backups   = Join-Path $Root 'backups'
         App       = Join-Path $Root 'app'
         State     = Join-Path $Root 'state.json'
+        Complete  = Join-Path $Root '.install-complete'   # written only after a verified install; the launcher checks it
         Constrain = Join-Path $Root 'tools\torch-constraints.txt'
         NukeLibs  = Join-Path $NukeHome 'comfynuke_libs'
         MenuPy    = Join-Path $NukeHome 'menu.py'
@@ -662,6 +663,14 @@ set PYTHONUSERBASE=
 set PYTHONEXECUTABLE=
 set VIRTUAL_ENV=
 set PYTHONNOUSERSITE=1
+if not exist "%~dp0.install-complete" (
+  echo.
+  echo The ComfyNuke install is not finished, so ComfyUI cannot start yet.
+  echo Open ComfyNuke and choose 1 "Install / Repair". If that keeps failing, choose 6 "Doctor".
+  echo.
+  pause
+  exit /b 1
+)
 cd /d "%~dp0ComfyUI"
 rem Moves models the browser downloads into ComfyUI\models (runs in this window and stops with it)
 if exist "%~dp0app\model_sorter.py" start "" /b ".venv\Scripts\python.exe" "%~dp0app\model_sorter.py" --comfy "%~dp0ComfyUI" --log-dir "%LOCALAPPDATA%\ComfyNuke\logs"
@@ -738,6 +747,86 @@ function New-Snapshot([string]$Reason, $State) {
 # ----------------------------------------------------------------------------
 # Preflight: check the machine and explain the plan before touching anything
 # ----------------------------------------------------------------------------
+# ---- Install health ----------------------------------------------------------------------
+# Sync clients (Dropbox, OneDrive, Google Drive, iCloud) lock and upload files while they are being
+# written. With tens of thousands of small Python files that leaves the install incomplete, and every
+# model would be uploaded too. Returns the provider's name, or $null for a normal local folder.
+function Get-CloudSyncProvider([string]$Path) {
+    $full = [IO.Path]::GetFullPath($Path).TrimEnd('\') + '\'
+    $roots = @()
+    foreach ($v in 'OneDrive', 'OneDriveCommercial', 'OneDriveConsumer') {
+        $r = [Environment]::GetEnvironmentVariable($v)
+        if ($r) { $roots += , @('OneDrive', $r) }
+    }
+    foreach ($f in @((Join-Path $env:LOCALAPPDATA 'Dropbox\info.json'), (Join-Path $env:APPDATA 'Dropbox\info.json'))) {
+        if (-not (Test-Path $f)) { continue }
+        try {
+            $j = Get-Content -Raw -LiteralPath $f | ConvertFrom-Json
+            foreach ($p in $j.PSObject.Properties) { if ($p.Value.path) { $roots += , @('Dropbox', $p.Value.path) } }
+        } catch { }
+    }
+    foreach ($r in $roots) {
+        if ($full.StartsWith($r[1].TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)) { return $r[0] }
+    }
+    # Folder names the clients create, e.g. "Company Dropbox", "Dropbox (Team)", "OneDrive - Company", "My Drive"
+    foreach ($seg in $full.TrimEnd('\').Split('\')) {
+        if ($seg -match '(?i)(^|\s)Dropbox($|\s\()') { return 'Dropbox' }
+        if ($seg -match '(?i)^OneDrive($|\s-\s)') { return 'OneDrive' }
+        if ($seg -match '(?i)^(Google ?Drive|My Drive|Shared drives)$') { return 'Google Drive' }
+        if ($seg -match '(?i)^iCloud ?Drive$') { return 'iCloud Drive' }
+        if ($seg -match '(?i)^Box( Sync)?$') { return 'Box' }
+    }
+    return $null
+}
+
+# Asks uv whether every requirements file is fully installed.
+# Returns @{ Ok = $true|$false|$null; Missing = @(...) }; $null means it could not check (e.g. offline).
+function Get-PackageHealth {
+    $uv = Get-UvExe
+    $missing = @()
+    if (-not $uv -or -not (Test-Path $P.Py)) { return @{ Ok = $false; Missing = @('Python environment') } }
+    foreach ($k in $Manifest.repos.PSObject.Properties.Name) {
+        $r = $Manifest.repos.$k
+        $req = Join-Path (Get-RepoDir $r.dir) 'requirements.txt'
+        if (-not $r.requirements -or -not (Test-Path $req)) { continue }
+        $argList = @('pip', 'install', '--dry-run', '--python', $P.Py, '-r', $req)
+        if (Test-Path $P.Constrain) { $argList += @('--constraint', $P.Constrain) }
+        $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try { $out = @(& $uv @argList 2>&1 | ForEach-Object { "$_" }); $code = $LASTEXITCODE } finally { $ErrorActionPreference = $old }
+        if ($code -ne 0) { return @{ Ok = $null; Missing = @() } }
+        if (-not ($out -match 'Would make no changes')) {
+            $missing += @($out | Where-Object { $_ -match '^\s*\+\s+(\S+)' } | ForEach-Object { $Matches[1] })
+        }
+    }
+    return @{ Ok = ($missing.Count -eq 0); Missing = @($missing | Select-Object -Unique) }
+}
+
+# The launcher refuses to start ComfyUI until this marker exists, so a half-finished install
+# shows "run Install / Repair" instead of a Python traceback.
+function Set-InstallComplete([bool]$Done) {
+    if (-not $Done) { Remove-Item -LiteralPath $P.Complete -Force -ErrorAction SilentlyContinue; return }
+    $health = Get-PackageHealth
+    if ($health.Ok -eq $false) {
+        throw ("Some Python packages did not install: " + (($health.Missing | Select-Object -First 8) -join ', ') + '. Choose "Install / Repair" again; if it keeps failing, run "Doctor".')
+    }
+    if ($null -eq $health.Ok) { Write-Log 'Could not double-check the Python packages (offline?); continuing.' 'WARN' }
+    Set-Content -LiteralPath $P.Complete -Value "Install verified by ComfyNuke $AppVersion on $(Get-Date -Format s)" -Encoding ASCII
+}
+
+# Shows the last error from the most recent install, update, rollback or download run
+function Write-LastError {
+    $log = Get-ChildItem -LiteralPath $LogDir -Filter '*.log' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '-(install|update|rollback|models)\.log$' } |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if (-not $log) { Write-Log 'No install or update log found yet.'; return }
+    $lines = @(Get-Content -LiteralPath $log.FullName -Encoding UTF8)
+    $idx = -1
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) { if ($lines[$i] -match '\[ERROR\]') { $idx = $i; break } }
+    if ($idx -lt 0) { Write-Log "The last run ($($log.Name)) finished without errors." 'OK'; return }
+    Write-Log "Last error, from $($log.Name) (the lines just before it usually say why):" 'WARN'
+    $lines[[math]::Max(0, $idx - 8)..$idx] | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow; Add-Content -LiteralPath $LogFile -Value "      $_" -Encoding UTF8 }
+}
+
 function Get-Preflight {
     $gpu = Get-GpuInfo
     $nukes = @(Find-Nuke)
@@ -798,6 +887,16 @@ function Invoke-Install {
         else { $script:Root = Read-Text 'Where should it be installed? (Models are big, so pick a drive with plenty of space, e.g. D:\ComfyNuke)' $DefaultRoot }
     }
     $script:Root = [IO.Path]::GetFullPath($script:Root).TrimEnd('\')
+    $cloudOld = $null
+    while ($provider = Get-CloudSyncProvider $script:Root) {
+        Write-Log "$script:Root is inside a $provider folder. $provider locks and uploads files while they are being written, which leaves the install incomplete, and it would upload many GB of models." 'WARN'
+        if ($Yes) { throw "Choose an install folder outside $provider" }
+        if (-not $cloudOld) { $cloudOld = $script:Root }
+        $script:Root = [IO.Path]::GetFullPath((Read-Text 'Choose a local folder that is not synced' $DefaultRoot)).TrimEnd('\')
+    }
+    if ($cloudOld -and $saved -and $saved -eq $cloudOld) {
+        Write-Log "Installing in $script:Root instead. Once it works, you can delete the old copy in $cloudOld." 'WARN'
+    }
     Set-Paths
     $pre = Get-Preflight
     Show-Preflight $pre
@@ -827,6 +926,7 @@ function Invoke-Install {
     New-Item -ItemType Directory -Force -Path $Root, $P.Tools | Out-Null
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
     @{ root = $Root } | ConvertTo-Json | Set-Content -LiteralPath $ConfigFile -Encoding UTF8
+    Set-InstallComplete $false
     if (Test-Path $P.Py) { New-Snapshot 'before repair' $state }
 
     Write-Log 'Tools' 'STEP'
@@ -888,6 +988,7 @@ function Invoke-Install {
     $device = Write-ComputeDevice
     Write-GpuLoad
     if ($pre.Gpu.Vendor -eq 'NVIDIA' -and $device -ne 'cuda') { Write-Log 'PyTorch cannot see your graphics card (CUDA). Please run "Doctor" and send the zip it creates to whoever helped you install' 'WARN' }
+    Set-InstallComplete $true
     New-Snapshot $(if ($isRepair) { 'after repair' } else { 'first install' }) $state
 
     Write-Host ''
@@ -1045,6 +1146,7 @@ function Invoke-Update {
     if (-not (Read-YesNo 'Are you sure?' $true)) { return }
     Wait-ForClosedApps
     New-Snapshot 'before update' $state
+    Set-InstallComplete $false
 
     foreach ($c in ($picked | Sort-Object { if ($_.Key -like 'tool:*') { 0 } elseif ($_.Key -eq 'python') { 1 } elseif ($_.Key -eq 'torch') { 2 } else { 3 } })) {
         Write-Log "Updating $($c.Label)" 'STEP'
@@ -1068,6 +1170,7 @@ function Invoke-Update {
     }
     if ($picked | Where-Object { $_.Tested }) { Set-Prop $state 'manifestVersion' $Manifest.manifestVersion }
     Save-State $state
+    Set-InstallComplete $true
     New-Snapshot 'after update' $state
     Invoke-Native (Get-UvExe) @('cache', 'prune')   # drop downloads of versions no longer used
     if ($picked | Where-Object { $_.Key -in @('python', 'torch') }) { [void](Write-ComputeDevice) }
@@ -1094,6 +1197,7 @@ function Invoke-Rollback {
     Wait-ForClosedApps
     $state = Read-State
     New-Snapshot 'before rollback' $state
+    Set-InstallComplete $false
     foreach ($prop in $snap.repos.PSObject.Properties) {
         $dir = $prop.Value.dir
         if (-not (Test-Path (Join-Path $dir '.git'))) { Write-Log "$($prop.Name) no longer exists, skipping" 'WARN'; continue }
@@ -1123,6 +1227,7 @@ function Invoke-Rollback {
         Invoke-Native (Get-UvExe) @('cache', 'prune')
     }
     Save-State $state
+    Set-InstallComplete $true
 }
 
 function Test-ComfyRunning {
@@ -1174,9 +1279,18 @@ function Invoke-Doctor {
         @('Nuke plugin', (Test-Path (Join-Path $NukeHome 'comfyui2nuke\__init__.py'))),
         @('Nuke plugin submodule nuke_util', ((Get-ChildItem (Join-Path $NukeHome 'comfyui2nuke\nuke_util') -ErrorAction SilentlyContinue | Measure-Object).Count -gt 0)),
         @('menu.py setup', ((Test-Path $P.MenuPy) -and ([IO.File]::ReadAllText($P.MenuPy) -match [regex]::Escape($BlockStart)))),
-        @('ComfyUI server running', (Test-ComfyRunning))
+        @('ComfyUI server running', (Test-ComfyRunning)),
+        @('Install finished and verified', (Test-Path $P.Complete))
     )
     foreach ($c in $checks) { Write-Log ('{0}  {1}' -f $(if ($c[1]) { '[OK]' } else { '[X] ' }), $c[0]) $(if ($c[1]) { 'OK' } else { 'WARN' }) }
+    $cloud = Get-CloudSyncProvider $Root
+    if ($cloud) { Write-Log "[X]  Install folder is inside ${cloud}: syncing breaks installs. Reinstall to a local folder (Install / Repair asks for one)." 'WARN' }
+    else { Write-Log '[OK]  Install folder is not cloud-synced' 'OK' }
+    $health = Get-PackageHealth
+    if ($health.Ok -eq $true) { Write-Log '[OK]  Python packages complete' 'OK' }
+    elseif ($health.Ok -eq $false) { Write-Log ('[X]  Python packages missing: ' + (($health.Missing | Select-Object -First 8) -join ', ') + ' (choose "Install / Repair")') 'WARN' }
+    else { Write-Log '[?]  Could not check the Python packages (offline?)' 'WARN' }
+    Write-LastError
     [void](Write-ComputeDevice)
     Write-GpuLoad
     Write-ComfyDevice

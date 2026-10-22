@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.1 — 2026-10-21
+
+Fixes from the first real install on another computer, where the install folder was inside Dropbox:
+
+- Install refuses cloud-synced folders (Dropbox, OneDrive, Google Drive, iCloud, Box) and asks for a local one. Sync clients lock files while thousands of them are written, which left the Python packages incomplete.
+- An install, update or rollback now ends by checking that every Python package is really installed, then writes an "install complete" marker. "Start ComfyUI" refuses to start without it and says to run Install / Repair, instead of showing a Python traceback.
+- Doctor checks the install folder and the Python packages, and shows the last error from the most recent install, update, rollback or download, with the lines that explain it.
+
 ## v0.1.0 — 2026-10-19
 
 First version. Tested pins (manifest `2026.10.19`):
