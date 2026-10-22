@@ -12,6 +12,7 @@ One-click install, update and rollback of [ComfyUI](https://github.com/comfyanon
 
 1. Download `ComfyNuke.zip` from [Releases](../../releases/latest) and unzip it.
 2. Double-click `ComfyNuke.bat` and choose **1 Install / Repair**.
+   - When it asks where to install, pick a **local folder that is not synced**, such as `C:\ComfyNuke` or `D:\ComfyNuke`. Dropbox, OneDrive, Google Drive and iCloud folders lock files while they sync, which leaves the install incomplete (and would upload many GB of models), so ComfyNuke refuses them and asks for another folder.
    - If Windows says "Windows protected your PC", click "More info" → "Run anyway".
 3. When it is done:
    - Double-click **Start ComfyUI** on the desktop and keep that black window open.
@@ -23,7 +24,7 @@ One-click install, update and rollback of [ComfyUI](https://github.com/comfyanon
 | Install / Repair | First install; later runs only put back missing pieces and never upgrade anything |
 | Check for updates | Lists what can be updated and how risky it is; you choose |
 | Roll back | Returns to any earlier restore point |
-| Doctor | Checks the setup and creates a zip on the Desktop (logs and settings only) to send to whoever helps you |
+| Doctor | Checks the setup (including whether every Python package installed), shows the last error with the lines that explain it, and creates a zip on the Desktop (logs and settings only) to send to whoever helps you |
 | Uninstall | Removes the Nuke menu and plugin (moved to a backup folder); models are kept |
 | Download missing models | Downloads every model a workflow still needs, straight into the right folders, with a progress bar; resumes after a closed window or a shutdown |
 | Sign in to Hugging Face | Saves or replaces your Hugging Face token (Install also asks for it once, at the start) |
@@ -46,6 +47,10 @@ Most models come from Hugging Face, which needs a free account and an access tok
 Never share the token. If it leaks, delete it on the Access Tokens page and create a new one.
 
 ComfyNuke checks the token with Hugging Face straight away, shows which account it belongs to, and warns if it can also write (a Read-only token is safer). It is saved where every Hugging Face tool looks for it, `%USERPROFILE%\.cache\huggingface\token` (`~/.cache/huggingface/token` on a Mac), readable only by your user account. It is never stored in an environment variable, in ComfyNuke's own files or in any log. "Status" shows who you are signed in as. Uninstall leaves the token alone; delete it on huggingface.co if you no longer need it.
+
+### If ComfyUI won't start
+
+"Start ComfyUI" only runs after an install that finished and was verified. If it says the install is not finished, or ComfyUI stops with an error such as `ModuleNotFoundError`, open ComfyNuke and choose **1 Install / Repair**: it continues where the last attempt stopped. If that fails again, choose **6 Doctor**; it shows the last error, and the lines just above it usually say why (for example a cloud-synced install folder, or a company network blocking downloads).
 
 ## Quick start (Mac)
 

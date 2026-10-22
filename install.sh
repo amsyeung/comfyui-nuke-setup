@@ -14,7 +14,7 @@
 
 set -o pipefail
 
-APP_VERSION="0.1.0"
+APP_VERSION="0.1.1"
 REPO_SLUG="amsyeung/comfyui-nuke-setup"
 PORT=8188
 BLOCK_START="# >>> comfynuke >>>"
@@ -167,6 +167,7 @@ set_paths() {
     BACKUPS="$ROOT/backups"
     APP_COPY="$ROOT/app"
     STATE="$ROOT/state.env"
+    COMPLETE="$ROOT/.install-complete"   # written only after a verified install; the launcher checks it
     CONSTRAIN="$ROOT/tools/torch-constraints.txt"
     NUKE_LIBS="$NUKE_HOME/comfynuke_libs"
     MENU_PY="$NUKE_HOME/menu.py"
@@ -523,6 +524,14 @@ unset PYTHONHOME PYTHONPATH PYTHONSTARTUP PYTHONUSERBASE PYTHONEXECUTABLE VIRTUA
 export PYTHONNOUSERSITE=1
 export OPENCV_IO_ENABLE_OPENEXR=1
 export PYTORCH_ENABLE_MPS_FALLBACK=1   # run ops Apple GPUs lack on the CPU instead of failing
+if [ ! -f "\$(dirname "\$0")/.install-complete" ]; then
+    echo
+    echo "The ComfyNuke install is not finished, so ComfyUI cannot start yet."
+    echo "Open ComfyNuke and choose 1 \"Install / Repair\". If that keeps failing, choose 6 \"Doctor\"."
+    echo
+    read -r -p "Press Enter to close"
+    exit 1
+fi
 cd "\$(dirname "\$0")/ComfyUI" || exit 1
 # Moves models the browser downloads into ComfyUI/models; stops when this window closes
 if [ -f ../app/model_sorter.py ]; then
@@ -607,6 +616,88 @@ EOF
     return 0
 }
 
+# --- install health ------------------------------------------------------------------------
+# Sync clients (Dropbox, OneDrive, Google Drive, iCloud) lock and upload files while they are being
+# written; with tens of thousands of small Python files that leaves the install incomplete.
+# Prints the provider's name and succeeds for a synced folder; fails for a normal local folder.
+cloud_sync_provider() {   # cloud_sync_provider PATH
+    local path="${1%/}/" seg dbx
+    case "$path" in
+        "$HOME/Library/CloudStorage/"*)
+            seg="${path#"$HOME/Library/CloudStorage/"}"; seg="${seg%%/*}"
+            case "$seg" in Dropbox*) echo Dropbox ;; OneDrive*) echo OneDrive ;; GoogleDrive*) echo "Google Drive" ;; Box*) echo Box ;; *) echo "$seg" ;; esac
+            return 0 ;;
+        "$HOME/Library/Mobile Documents/"*) echo "iCloud Drive"; return 0 ;;
+    esac
+    if [ -f "$HOME/.dropbox/info.json" ]; then
+        for dbx in personal business; do
+            seg="$(plutil -extract "$dbx.path" raw -o - "$HOME/.dropbox/info.json" 2>/dev/null)"
+            if [ -n "$seg" ]; then
+                case "$path" in "${seg%/}/"*) echo Dropbox; return 0 ;; esac
+            fi
+        done
+    fi
+    # Folder names the clients create, e.g. "Dropbox (Team)", "Company Dropbox", "OneDrive - Company"
+    local IFS=/
+    for seg in $path; do
+        case "$seg" in
+            Dropbox|"Dropbox ("*|*" Dropbox") echo Dropbox; return 0 ;;
+            OneDrive|"OneDrive - "*) echo OneDrive; return 0 ;;
+            "Google Drive"|GoogleDrive|"My Drive"|"Shared drives") echo "Google Drive"; return 0 ;;
+            "iCloud Drive"|iCloudDrive) echo "iCloud Drive"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# Asks uv whether every requirements file is fully installed. Prints missing package names.
+# Returns 0 when complete, 1 when something is missing, 2 when it could not check (e.g. offline).
+package_health() {
+    [ -x "$UV" ] && [ -x "$PY" ] || { echo "Python environment"; return 1; }
+    local k req out missing="" code
+    for k in $(repo_keys); do
+        [ "$(mf "repos.$k.requirements")" = "true" ] || continue
+        req="$(repo_dir "$k")/requirements.txt"
+        [ -f "$req" ] || continue
+        if [ -f "$CONSTRAIN" ]; then out="$("$UV" pip install --dry-run --python "$PY" -r "$req" --constraint "$CONSTRAIN" 2>&1)"; code=$?
+        else out="$("$UV" pip install --dry-run --python "$PY" -r "$req" 2>&1)"; code=$?; fi
+        [ $code -eq 0 ] || return 2
+        echo "$out" | grep -q 'Would make no changes' && continue
+        missing="$missing$(echo "$out" | sed -n 's/^ *+ *\([^ ]*\).*/\1/p')
+"
+    done
+    missing="$(printf '%s' "$missing" | sed '/^$/d' | sort -u)"
+    [ -z "$missing" ] && return 0
+    echo "$missing"
+    return 1
+}
+
+# The launcher refuses to start ComfyUI until this marker exists, so a half-finished install
+# shows "run Install / Repair" instead of a Python traceback.
+set_install_complete() {   # set_install_complete 0|1
+    if [ "$1" != 1 ]; then rm -f "$COMPLETE"; return 0; fi
+    local missing
+    missing="$(package_health)"
+    case $? in
+        1) die "Some Python packages did not install: $(echo "$missing" | head -8 | paste -sd ',' -). Choose \"Install / Repair\" again; if it keeps failing, run \"Doctor\"." ;;
+        2) log WARN "Could not double-check the Python packages (offline?); continuing." ;;
+    esac
+    printf 'Install verified by ComfyNuke %s on %s\n' "$APP_VERSION" "$(date +%Y-%m-%dT%H:%M:%S)" > "$COMPLETE"
+}
+
+# Shows the last error from the most recent install, update, rollback or download run
+write_last_error() {
+    local f n
+    f="$(ls -1t "$LOG_DIR"/*-install.log "$LOG_DIR"/*-update.log "$LOG_DIR"/*-rollback.log "$LOG_DIR"/*-models.log 2>/dev/null | head -1)"
+    [ -n "$f" ] || { log INFO "No install or update log found yet."; return 0; }
+    n="$(grep -n '\[ERROR\]' "$f" | tail -1 | cut -d: -f1)"
+    if [ -z "$n" ]; then log OK "The last run ($(basename "$f")) finished without errors."; return 0; fi
+    log WARN "Last error, from $(basename "$f") (the lines just before it usually say why):"
+    sed -n "$(( n > 8 ? n - 8 : 1 )),${n}p" "$f" | while IFS= read -r line; do
+        printf '      %s%s%s\n' "$c_yellow" "$line" "$c_off"; printf '      %s\n' "$line" >> "$LOG_FILE"
+    done
+}
+
 # --- commands -----------------------------------------------------------------------------
 cmd_install() {
     local repair=0 k commit ref check
@@ -615,6 +706,15 @@ cmd_install() {
         [ -z "$ROOT" ] && ROOT="$(ask_text "Where should it be installed? (Models are big, so an external SSD works well)" "$DEFAULT_ROOT")"
     fi
     ROOT="${ROOT/#\~/$HOME}"; ROOT="${ROOT%/}"
+    local provider cloud_old=""
+    while provider="$(cloud_sync_provider "$ROOT")"; do
+        log WARN "$ROOT is inside $provider. $provider locks and uploads files while they are being written, which leaves the install incomplete, and it would upload many GB of models."
+        [ "$YES" = 1 ] && die "Choose an install folder outside $provider"
+        [ -z "$cloud_old" ] && cloud_old="$ROOT"
+        ROOT="$(ask_text "Choose a local folder that is not synced" "$DEFAULT_ROOT")"
+        ROOT="${ROOT/#\~/$HOME}"; ROOT="${ROOT%/}"
+    done
+    [ -n "$cloud_old" ] && [ "$(saved_root)" = "$cloud_old" ] && log WARN "Installing in $ROOT instead. Once it works, you can delete the old copy in $cloud_old."
     set_paths
     preflight
     [ -n "$PRE_ISSUES" ] && die "Please fix the problems shown in red above, then run it again"
@@ -641,6 +741,7 @@ cmd_install() {
 
     mkdir -p "$ROOT" "$TOOLS" "$DATA_DIR"
     printf 'root=%s\n' "$ROOT" > "$CONFIG_FILE"
+    set_install_complete 0
     [ $repair = 1 ] && new_snapshot "before repair"
 
     log STEP "Tools"
@@ -685,6 +786,7 @@ cmd_install() {
     write_compute_device
     check="$("$PY" -c 'import torch; print(torch.backends.mps.is_available())' 2>/dev/null)"
     case "$check" in *True) ;; *) log WARN "PyTorch cannot use the Apple GPU (MPS). Please run \"Doctor\" and send the zip it creates to the person who helped you install." ;; esac
+    set_install_complete 1
     if [ $repair = 1 ]; then new_snapshot "after repair"; else new_snapshot "first install"; fi
 
     log STEP "All done! How to use it:"
@@ -836,6 +938,7 @@ cmd_update() {
     ask_yes_no "Are you sure?" y || return 0
     wait_for_closed_apps
     new_snapshot "before update"
+    set_install_complete 0
     # Order matters: tools, then Python, then torch, then repos
     for k in tool: python torch repo: nukelibs; do
         for i in $picked; do
@@ -855,6 +958,7 @@ cmd_update() {
         done
     done
     state_set manifest "$(mf manifestVersion)"
+    set_install_complete 1
     new_snapshot "after update"
     run "$UV" cache prune   # drop downloads of versions no longer used
     for i in $picked; do case "${C_KEY[i]}" in python|torch) write_compute_device; break ;; esac; done
@@ -906,6 +1010,7 @@ EOF
         add_change Restore "Python packages" "same as $id"
         run "$UV" cache prune
     fi
+    set_install_complete 1
 }
 
 cmd_status() {
@@ -959,6 +1064,20 @@ cmd_doctor() {
     [ -n "$(ls -A "$NUKE_HOME/comfyui2nuke/nuke_util" 2>/dev/null)" ]; check_line "Nuke plugin submodule nuke_util" $?
     [ -f "$MENU_PY" ] && grep -qF "$BLOCK_START" "$MENU_PY"; check_line "menu.py setup" $?
     comfy_running; check_line "ComfyUI server running" $?
+    [ -f "$COMPLETE" ]; check_line "Install finished and verified" $?
+    local cloud missing
+    if cloud="$(cloud_sync_provider "$ROOT")"; then
+        log WARN "[X]  Install folder is inside $cloud: syncing breaks installs. Reinstall to a local folder (Install / Repair asks for one)."
+    else
+        log OK "[OK] Install folder is not cloud-synced"
+    fi
+    missing="$(package_health)"
+    case $? in
+        0) log OK "[OK] Python packages complete" ;;
+        1) log WARN "[X]  Python packages missing: $(echo "$missing" | head -8 | paste -sd ',' -) (choose \"Install / Repair\")" ;;
+        *) log WARN "[?]  Could not check the Python packages (offline?)" ;;
+    esac
+    write_last_error
     write_compute_device
     write_comfy_device
     # Where the disk space goes
